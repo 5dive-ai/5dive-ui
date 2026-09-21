@@ -1,29 +1,37 @@
 #!/usr/bin/env bash
 # `ui` — the free single-host web UI, published as a 5dive plugin (DIVE-4618).
 #
-# PROVENANCE. The body of this file below the prelude is `src/cmd_ui.sh` from
-# the core CLI, carried across VERBATIM apart from three divergences, each
-# marked `PLUGIN DIVERGENCE` at its site. Core keeps its copy until the core
-# seam change lands (readers first, delete last — see the migration guide), so
-# for now the two are meant to agree byte-for-byte on their output, and
-# `tests/ui_parity.sh` is what says whether they still do.
+# PROVENANCE. The PRESENTATION half of this file — the page, the routes, the
+# server that holds the socket — is `src/cmd_ui.sh` from the core CLI, carried
+# across verbatim apart from two divergences, each marked `PLUGIN DIVERGENCE` at
+# its site. Core no longer ships that file: DIVE-4783 deleted it and released the
+# `ui` verb name so this plugin could claim it, which is why `5dive plugin add
+# 5dive-ai/5dive-ui` works now and was refused before.
 #
 # WHAT A PLUGIN CANNOT INHERIT. A plugin verb is an EXECUTABLE, not a sourced
 # fragment, so nothing core defines is in scope here: `fail`, `warn`, `step`,
-# the `E_*` codes, `STATE_DIR`/`TASKS_DIR`, `dbfmt` and `five_self_bundle` all
-# have to be re-established. That is what this prelude is, and it is deliberately
-# the SMALLEST surface that makes the carried body run unmodified.
+# the `E_*` codes and `five_self_bundle` all have to be re-established. That is
+# what this prelude is, and it is deliberately the SMALLEST surface that makes
+# the carried body run.
 #
-# THE SEAM THIS DOES NOT CLOSE, stated plainly because the next step depends on
-# it: the carried body reads core's task store by SQL, naming its tables and its
-# columns (`tasks`, `agents_org`, `event_triggers`, `event_deliveries`). Those
-# are core's private schema, not a published contract, so a core migration that
-# renames a column breaks this plugin silently on a box that upgraded core and
-# not the plugin. Publishing the tree does not create that risk — nothing is
-# removed from core and no box is told to install this yet — but ADVERTISING it
-# does, and that is why steps 2-4 of the migration are held on the read
-# contract. Do not point boxes here until core exposes this data as a versioned
-# read surface.
+# THE SEAM, AND IT IS NOW CLOSED (DIVE-4779 step 1 / DIVE-4783 step 2). The
+# first published version of this file carried core's five SQL queries across
+# with the rest of the body: it opened core's private sqlite store and named
+# `tasks`, `agents_org`, `event_triggers`, `event_deliveries` and about thirty
+# columns, two of them derived expressions that existed nowhere but inside those
+# query strings. That coupling was a STRING — nothing in either repo could see
+# it break, so a core migration renaming a column would have broken these views
+# silently on every box that upgraded one side and not the other (DIVE-2512's
+# class, fleet-wide).
+#
+# Core now publishes the document instead: `5dive board --json`, versioned, with
+# `--contract-version` as a one-exec negotiation that reads no store at all.
+# CORE OWNS THE DOCUMENT, THIS PLUGIN OWNS THE PRESENTATION — the page, the
+# routes, the layout, the interaction. So this file no longer opens a database,
+# does not need `sqlite3`, and does not know what a column is. It asks, checks
+# the version it got against the versions it understands, and renders.
+# The contract and the alternatives refused are written down in core's
+# docs/board-contract.md.
 set -euo pipefail
 
 # Error codes: the subset the carried body raises, values identical to core's
@@ -38,54 +46,56 @@ fail() { local code="$1"; shift; echo "error: $*" >&2; exit "$code"; }
 warn() { echo "warn: $*" >&2; }
 step() { echo "==> $*" >&2; }
 
-# State paths, resolved exactly as core resolves them (src/header.sh:70,
-# src/lib/tasks_db.sh:16-17), including the env overrides — the harness needs
-# them and so does anyone running a box with a relocated state dir.
-STATE_DIR="${STATE_DIR:-/var/lib/5dive}"
-TASKS_DIR="${TASKS_DIR:-${STATE_DIR}/tasks}"
-TASKS_DB="${TASKS_DB:-${TASKS_DIR}/tasks.db}"
+command -v jq >/dev/null 2>&1 || fail "$E_NOT_INSTALLED" "ui needs jq to read the board document"
 
-command -v sqlite3 >/dev/null 2>&1 || fail "$E_NOT_INSTALLED" "ui needs sqlite3 to read the local board"
-command -v jq      >/dev/null 2>&1 || fail "$E_NOT_INSTALLED" "ui needs jq to assemble the view data"
+# THE CONTRACT THIS BUILD UNDERSTANDS. A list, not a floor: a consumer pins the
+# versions it can render and refuses an unknown one BY NAME, because the version
+# integer moves only on a BREAK (a field removed, renamed or retyped) and never
+# on a growth. A box serving version 2 is therefore not "newer", it is
+# incompatible, and rendering it anyway would put wrong numbers on a screen
+# nobody can tell is wrong.
+readonly FIVE_UI_BOARD_CONTRACT="5dive.board"
+readonly FIVE_UI_BOARD_VERSIONS="1"
 
-# dbfmt: core's reader (src/lib/tasks_db.sh:3205), minus everything a plugin has
-# no business doing. Core's version carries DIVE-2249's store fence because the
-# same function is used for writes there; here the fence is absolute — a
-# statement that is not a single SELECT never reaches sqlite3. The UI is
-# read-only by construction upstream (three GET paths, 405 for everything else)
-# and this keeps that true when the code runs outside core's entrypoint.
-#
-# The null-key strip is core's DIVE-1610 behaviour and is load-bearing for
-# parity: sqlite3 -json emits every selected column, so dropping it would make
-# every row differ from core's output by ~70% of its keys.
-dbfmt() {
-  [[ "$1" == "-json" ]] || fail "$E_GENERIC" "this reader only speaks -json"
-  local sql="$2"
-  [[ "${sql^^}" == SELECT* ]] || fail "$E_GENERIC" "refusing a non-SELECT statement: a plugin never writes core's store"
-  local out
-  out=$(sqlite3 -cmd ".timeout 5000" -json "$TASKS_DB" "$sql")
-  [[ -z "$out" ]] && return 0
-  printf '%s' "$out" | jq -c 'if type=="array" then map(with_entries(select(.value != null))) else . end'
+# The core CLI. Overridable so the harness can point at a stub board and so a
+# box with a relocated install still works; resolved once, and checked, rather
+# than assumed present, because "5dive is not on PATH" and "core is too old to
+# carry `board`" are different failures and the second is the interesting one.
+FIVE_UI_CLI="${FIVE_UI_CLI:-5dive}"
+
+_ui_board_unsupported() {
+  fail "$E_VALIDATION" "this box serves board contract version $1, and this build of the ui plugin understands version(s) ${FIVE_UI_BOARD_VERSIONS// /, }.
+       That integer moves only on a BREAKING change, so rendering it anyway would show you wrong numbers rather than no numbers.
+       Upgrade the plugin (5dive plugin upgrade ui@5dive-ui), or pin core to a release serving a version this build knows."
+}
+
+# NEGOTIATION IS ONE EXEC AND IT HAPPENS BEFORE THE BROWSER. `board
+# --contract-version` prints the bare integer and reads no store, which is the
+# property the refused published-view option could not have at any price: it
+# answers on a box whose board is absent, unreadable or mid-migration, and those
+# are exactly the boxes where getting the answer wrong costs most. A core too
+# old to carry the verb fails the exec, which is the same answer in the same
+# place — so that failure is named here rather than arriving as a 500 in a tab.
+_ui_board_preflight() {
+  local v rc=0
+  v="$("$FIVE_UI_CLI" board --contract-version 2>/dev/null)" || rc=$?
+  if (( rc != 0 )) || [[ ! "$v" =~ ^[0-9]+$ ]]; then
+    command -v "$FIVE_UI_CLI" >/dev/null 2>&1 \
+      || fail "$E_NOT_INSTALLED" "ui is a 5dive plugin and needs the 5dive CLI on PATH to read this box's board (set FIVE_UI_CLI to point at it)"
+    fail "$E_NOT_INSTALLED" "this box's 5dive does not answer \`board --contract-version\`, so it is older than the read contract this UI renders.
+       Upgrade core (sudo 5dive self-update) — the UI reads \`5dive board\`, it no longer opens the task store itself."
+  fi
+  [[ " $FIVE_UI_BOARD_VERSIONS " == *" $v "* ]] || _ui_board_unsupported "$v"
+  printf '%s' "$v"
 }
 
 # The page polls a command; as a plugin that command is this file, not the CLI
 # bundle. Resolved once, absolutely, because the server runs from a temp dir.
 FIVE_UI_SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "$0")"
 
-# The named-empty-board reply, lifted out of the carried body so both guards can
-# reach it (see PLUGIN DIVERGENCE 2).
-_ui_absent_json() {
-  jq -n --arg host "$(hostname 2>/dev/null || echo localhost)" \
-        --arg now "$(date -u '+%Y-%m-%d %H:%M:%SZ')" \
-    '{ok: true, data: {scope: "single-host", store: "absent", host: $host, generated_at: $now,
-      org: [], queue: [], gates: [], flows: [], triggers: [], deliveries: [],
-      stats: {agents: 0, open: 0, gates: 0, delegated: 0, agent_to_agent: 0,
-              human_touch: 0, awaiting_verify: 0, in_review: 0,
-              triggers: 0, trigger_deliveries: 0}}}'
-}
-
 # ---------------------------------------------------------------------------
-# Carried verbatim from core's src/cmd_ui.sh below this line.
+# Carried from core's src/cmd_ui.sh below this line — the PRESENTATION half.
+# The producer above it is this repo's own; everything below is the surface.
 # ---------------------------------------------------------------------------
 # `5dive ui` — the free single-host web UI (DIVE-2655): read-only views over
 # org, queue, gates, and DIVE-3931's signed trigger delivery history.
@@ -174,7 +184,14 @@ cmd_ui() {
   command -v python3 >/dev/null 2>&1 \
     || fail "$E_NOT_INSTALLED" "5dive ui needs python3 (stdlib only) to hold the socket. Install python3, or use '5dive ui --data' / the CLI verbs."
 
-  # PLUGIN DIVERGENCE 1/3. In core this asked `five_self_bundle` for the CLI
+  # BEFORE THE SOCKET, not at the first request. An incompatible board, a core
+  # too old to serve one, or no CLI at all are all conditions this process can
+  # discover in one exec that reads no store — and discovering them here costs a
+  # named error on a terminal instead of a broken page in a tab that the person
+  # who opened it has no way to diagnose.
+  _ui_board_preflight >/dev/null
+
+  # PLUGIN DIVERGENCE 1/2. In core this asked `five_self_bundle` for the CLI
   # bundle, because that is what answers `5dive ui --data`. Here the command the
   # page polls is this executable, resolved in the prelude; FIVE_UI_BIN still
   # overrides it, which is what the parity harness uses.
@@ -230,122 +247,37 @@ cmd_ui() {
 # the canonical inbox predicate, never raw `need_type IS NOT NULL`.
 # ---------------------------------------------------------------------------
 _ui_state_json() {
-  # A box with no task store yet is a REAL state, not an error: `sudo 5dive task
-  # init` is root-only, and refusing here would mean a fresh install cannot open
-  # the UI at all. So it serves the views with a named empty board rather
-  # than an unnamed one — `store: "absent"` is the difference between "nothing is
-  # queued" and "there is nowhere to queue anything", which an empty array alone
-  # cannot say.
+  # THE SEAM ITSELF, and the whole point of the plugin existing. This is not a
+  # divergence from core's file — it is the line that replaced ~80 of them.
+  # Core's body assembled this document here, from five SELECTs naming its
+  # private tables and a jq derivation on top. This asks for it. The output is core's bytes, passed through
+  # unaltered — not re-keyed, not re-ordered, not re-wrapped — so `5dive ui
+  # --data`, `/api/state` and `5dive board --json` cannot drift apart on the
+  # same state: there is one producer and it is not in this repo.
   #
-  # PLUGIN DIVERGENCE 2/3. Core tested the DIRECTORY and then called
-  # `tasks_db_init`, which CREATES the store when it is missing and the caller
-  # is root, and refuses for anyone else. A plugin must never create core's
-  # state and must never be the thing that ran a schema migration, so the guard
-  # widens instead: a store this process cannot READ is reported as the same
-  # named empty board. On a box where core is installed the difference is
-  # invisible, because any path that reaches core at all has already run init.
-  if [[ ! -d "$TASKS_DIR" || ! -r "$TASKS_DB" ]]; then
-    _ui_absent_json
-    return 0
+  # The store-absent board is core's answer too (`store: "absent"`, every key
+  # present, all zeros), so a fresh box that has never run `task init` still
+  # opens the page — this file no longer has an opinion about it.
+  local doc rc=0
+  doc="$("$FIVE_UI_CLI" board --json 2>/dev/null)" || rc=$?
+  if (( rc != 0 )) || [[ -z "$doc" ]]; then
+    _ui_board_preflight >/dev/null   # names the real cause: no CLI, or a core too old
+    fail "$E_GENERIC" "\`$FIVE_UI_CLI board --json\` failed (exit $rc) — run it yourself to see what this box said"
   fi
-  local dir; dir="$(mktemp -d "${TMPDIR:-/tmp}/5dive-ui-data.XXXXXX")" || fail "$E_GENERIC" "could not create a temp dir"
 
-  dbfmt -json "SELECT name, reports_to, role, title FROM agents_org ORDER BY COALESCE(reports_to,''), name;" > "$dir/org.json"
-  [[ -s "$dir/org.json" ]] || printf '[]' > "$dir/org.json"
+  # Checked on the DOCUMENT as well as at the preflight, and not as belt and
+  # braces: the preflight runs once when the server starts, and a box can be
+  # upgraded underneath a long-lived server. This costs no extra exec — the
+  # contract block travels inside the document precisely so a consumer holding
+  # only the document can still check it.
+  local name ver
+  name="$(printf '%s' "$doc" | jq -r '.data.contract.name // empty' 2>/dev/null || true)"
+  ver="$(printf '%s' "$doc"  | jq -r '.data.contract.version // empty' 2>/dev/null || true)"
+  [[ "$name" == "$FIVE_UI_BOARD_CONTRACT" ]] \
+    || fail "$E_VALIDATION" "this box's \`board\` served a document named '${name:-<none>}', not '$FIVE_UI_BOARD_CONTRACT' — refusing to render something that is not a board"
+  [[ " $FIVE_UI_BOARD_VERSIONS " == *" $ver "* ]] || _ui_board_unsupported "${ver:-<none>}"
 
-  dbfmt -json "SELECT ident, title, status, priority, assignee, created_by, verifier, maker_agent, project_key, created_at,
-           CASE WHEN maker_agent IS NOT NULL AND assignee=verifier AND status NOT IN ('done','cancelled')
-                THEN CASE WHEN handoff_ack_at IS NOT NULL THEN 'reviewing' ELSE 'delivered' END
-                ELSE NULL END AS handoff_state,
-           CASE WHEN need_type IS NOT NULL AND need_answered_at IS NULL AND status NOT IN ('done','cancelled') THEN 1 ELSE 0 END AS gate_live
-         FROM tasks
-         WHERE status NOT IN ('done','cancelled') AND COALESCE(kind,'') <> 'recurring'
-         ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, created_at;" > "$dir/queue.json"
-  [[ -s "$dir/queue.json" ]] || printf '[]' > "$dir/queue.json"
-
-  dbfmt -json "SELECT ident, title, status, priority, assignee, created_by, need_type, tier, ask, recommend, need_options, created_at
-         FROM tasks
-         WHERE need_type IS NOT NULL AND need_answered_at IS NULL AND status NOT IN ('done','cancelled')
-         ORDER BY COALESCE(tier,1) DESC, created_at;" > "$dir/gates.json"
-  [[ -s "$dir/gates.json" ]] || printf '[]' > "$dir/gates.json"
-
-  dbfmt -json "SELECT g.id,g.name,g.source,g.event_pattern AS event,g.source_scope AS repo,
-           g.filter_json AS filters,g.target,g.enabled,g.max_pending,g.on_overflow,g.max_payload_bytes,
-           COUNT(d.id) AS deliveries,
-           SUM(CASE WHEN d.outcome='accepted' THEN 1 ELSE 0 END) AS accepted,
-           SUM(CASE WHEN d.outcome IN ('failed','invalid_signature') THEN 1 ELSE 0 END) AS failed,
-           MAX(d.received_at) AS last_delivery_at
-         FROM event_triggers g LEFT JOIN event_deliveries d ON d.trigger_id=g.id
-         GROUP BY g.id ORDER BY g.name;" > "$dir/triggers.json"
-  [[ -s "$dir/triggers.json" ]] || printf '[]' > "$dir/triggers.json"
-
-  dbfmt -json "SELECT d.id,g.name AS trigger,g.source,d.event_type,d.received_at,d.signature_status,
-           d.outcome,t.ident AS task,d.error,d.replay_count
-         FROM event_deliveries d JOIN event_triggers g ON g.id=d.trigger_id
-         LEFT JOIN tasks t ON t.id=d.task_id ORDER BY d.id DESC LIMIT 100;" > "$dir/deliveries.json"
-  [[ -s "$dir/deliveries.json" ]] || printf '[]' > "$dir/deliveries.json"
-
-  # flows: who handed work to whom, on THIS board, right now.
-  #
-  # This is the view the org layer exists to make legible, so it is derived from
-  # the rows themselves rather than asserted in copy. Two edge kinds:
-  #   delegation  created_by -> assignee on an open row
-  #   verify      assignee   -> verifier on a maker->verifier row
-  # An endpoint that is not a name in agents_org is a human (or a channel
-  # principal such as `telegram`/`council`), and any edge touching one is marked
-  # human:true. "No human in the path" is then a COUNT off the board, not a claim.
-  local out rc=0
-  out=$(jq -n \
-    --slurpfile org "$dir/org.json" \
-    --slurpfile queue "$dir/queue.json" \
-    --slurpfile gates "$dir/gates.json" \
-    --slurpfile triggers "$dir/triggers.json" \
-    --slurpfile deliveries "$dir/deliveries.json" \
-    --arg host "$(hostname 2>/dev/null || echo localhost)" \
-    --arg now "$(date -u '+%Y-%m-%d %H:%M:%SZ')" '
-    ($org[0] // []) as $org
-    | ($queue[0] // []) as $queue
-    | ($gates[0] // []) as $gates
-    | ($triggers[0] // []) as $triggers
-    | ($deliveries[0] // []) as $deliveries
-    | ([$org[].name]) as $agents
-    | ($agents | map({(.): true}) | add // {}) as $isAgent
-    | ([ $queue[]
-         | select(.created_by != null and .assignee != null and .created_by != .assignee)
-         | {from: .created_by, to: .assignee, ident: .ident, title: .title, kind: "delegation",
-            human: (($isAgent[.created_by] // false) == false or ($isAgent[.assignee] // false) == false)} ]
-       + [ $queue[]
-         | select(.verifier != null)
-         | {from: (.maker_agent // .assignee), to: .verifier, ident: .ident, title: .title,
-            kind: "verify", state: (.handoff_state // "assigned"),
-            human: ((($isAgent[(.maker_agent // .assignee)] // false) == false) or ($isAgent[.verifier] // false) == false)} ]) as $flows
-    | {ok: true, data: {
-        scope: "single-host",
-        store: "ready",
-        host: $host,
-        generated_at: $now,
-        org: $org,
-        queue: $queue,
-        gates: $gates,
-        triggers: $triggers,
-        deliveries: $deliveries,
-        flows: $flows,
-        stats: {
-          agents: ($agents | length),
-          open: ($queue | length),
-          gates: ($gates | length),
-          delegated: ([$flows[] | select(.kind == "delegation")] | length),
-          agent_to_agent: ([$flows[] | select(.human == false)] | length),
-          human_touch: ([$flows[] | select(.human)] | length),
-          awaiting_verify: ([$queue[] | select(.handoff_state == "delivered")] | length),
-          in_review: ([$queue[] | select(.handoff_state == "reviewing")] | length),
-          triggers: ($triggers | length),
-          trigger_deliveries: ($deliveries | length)
-        }
-      }}') || rc=$?
-  rm -rf "$dir"
-  (( rc == 0 )) || fail "$E_GENERIC" "could not assemble the view data (jq exit $rc)"
-  printf '%s\n' "$out"
+  printf '%s\n' "$doc"
 }
 
 # ---------------------------------------------------------------------------
@@ -884,7 +816,7 @@ class Handler(BaseHTTPRequestHandler):
     def _state(self):
         try:
             proc = subprocess.run(
-                [BUNDLE, "--data"],   # PLUGIN DIVERGENCE 3/3: core polled `<bundle> ui --data`
+                [BUNDLE, "--data"],   # PLUGIN DIVERGENCE 2/2: core polled `<bundle> ui --data`
                 capture_output=True, timeout=30,
             )
         except Exception as exc:                # noqa: BLE001 - reported, not raised
