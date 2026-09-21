@@ -58,4 +58,12 @@ that renames a column breaks the views silently on any box that upgraded one sid
 Publishing this tree does not create that risk — nothing is removed and nobody is told to install it
 — but advertising the install does. The read contract is owed before that step.
 
+## Want to build a view?
+
+The control plane is early and four read-only views is a start, not a finish.
+[CONTRIBUTING.md](CONTRIBUTING.md) is the honest map of what is missing, with the data source
+named for each screen, plus five scoped issues — two of them
+[good first issue](https://github.com/5dive-ai/5dive-ui/labels/good%20first%20issue). You do not
+need a 5dive box: `ui/bin/ui --data` answers from a clone.
+
 MIT licensed, like the CLI.
