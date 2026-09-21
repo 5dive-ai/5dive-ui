@@ -53,14 +53,16 @@ The contract, and the two alternatives that were refused, are written down in co
 | `ui/bin/ui` | the verb. One file: the board call, the page, and the server that holds the socket |
 | `ui/.claude-plugin/plugin.json` | the plugin manifest (contract 1, `verb` capability) |
 | `.claude-plugin/marketplace.json` | the one-entry marketplace at the repo root |
-| `docs/contribute.md` | **start here if you want to build a screen** — the scoped issues and where each number comes from |
+| `CONTRIBUTING.md` | **start here if you want to build a screen** — the scoped issues and where each number comes from |
 | `tests/ui_plugin_unit.sh` | the harness: the passthrough, the negotiation, the refusals, the served page |
 | `tests/ui_mutants.sh` | the control: each mutant breaks one behaviour and names the arm that must kill it |
 
 ## Contributing
 
-[docs/contribute.md](docs/contribute.md) is the honest map of what is missing, with five scoped
-issues and the data source named for each one. Two of them are good first issues.
+[CONTRIBUTING.md](CONTRIBUTING.md) is the honest map of what is missing, with five scoped issues
+and the data source named for each one — two of them
+[good first issue](https://github.com/5dive-ai/5dive-ui/labels/good%20first%20issue). Changing the
+page needs no 5dive box at all: `ui/bin/ui --html` renders from a clone.
 
 ```
 bash tests/ui_plugin_unit.sh
@@ -72,4 +74,4 @@ The suite needs `bash`, `jq`, `python3` and `curl` — no 5dive and no box, beca
 output with the real `5dive board --json` and skip themselves where core is not installed, because
 that comparison is a box arm, not a CI arm.
 
-MIT.
+MIT licensed, like the CLI.

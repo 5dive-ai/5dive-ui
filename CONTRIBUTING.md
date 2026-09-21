@@ -12,7 +12,7 @@ build the screens.
 
 **Today**, the whole thing, running on the box this page was written from:
 
-![The org chart view of `5dive ui`, showing the agent tree and how many live handoffs had no human in the path](ui-today.png)
+![The org chart view of `5dive ui`, showing the agent tree and how many live handoffs had no human in the path](docs/ui-today.png)
 
 **Wanted:** the views below, and the ones you think of that we did not.
 
@@ -73,7 +73,7 @@ is tagged beginner-friendly is a page where nothing was measured.
 
 ### Where the code is
 
-All of it is [`ui/bin/ui`](../ui/bin/ui), one file:
+All of it is [`ui/bin/ui`](ui/bin/ui), one file:
 
 - `_ui_state_json()` asks the runtime for this host's board — one `5dive board --json` call — and
   passes the document through untouched. It is served at `GET /api/state`.

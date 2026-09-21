@@ -32,8 +32,10 @@ what this repository owns: the passthrough, the negotiation, the refusals, the s
 runtime arm that poisons `sqlite3` on `PATH` to show the store coupling is gone in the binary and
 not just in the diff. 31 arms, 7 mutants.
 
-**The contributor page came with it** (`docs/contribute.md`), with the five scoped issues now
-pointing at this repository's own.
+**The contributor page is corrected, not re-carried.** DIVE-4784 landed it here as
+`CONTRIBUTING.md` while this change was in flight; that version described the SQL store read and
+told contributors a clone answers `--data`, both of which this release falsifies. The page now
+names the board call, `--html` as the no-box loop, and drops `sqlite3` from the prerequisites.
 
 ## 0.1.0 — 2026-09-21
 
