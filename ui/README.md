@@ -1,6 +1,6 @@
 # ui
 
-Three views over ONE host: the org chart, the open queue, the live gates, and the trigger
+Four views over ONE host: the org chart, the open queue, the live gates, and the trigger
 deliveries that opened rows. Read-only by construction — the server answers `GET`/`HEAD` on
 exactly three paths and returns 405 for everything else, so no amount of client-side code can
 make it write.
@@ -22,17 +22,40 @@ loudly, at startup.
 Deliberately absent, because this is the free single-host view: anything fleet-wide, the
 marketplace, hosted council.
 
-## The three divergences from the core verb
+## Where the data comes from
 
-`bin/ui` is core's `src/cmd_ui.sh` carried across verbatim apart from these, each marked
-`PLUGIN DIVERGENCE` at its site:
+Everything on every screen is one document, emitted by the runtime:
+
+```
+5dive board --json              # exactly what `ui --data` prints
+5dive board --contract-version  # the integer this build pins
+```
+
+**Core owns the document, this plugin owns the presentation.** `--data` passes core's bytes
+through untouched, so `ui --data`, `/api/state` and `5dive board --json` cannot drift apart: there
+is one producer and it is not in this repository. This file opens no database and does not need
+`sqlite3`.
+
+`FIVE_UI_BOARD_VERSIONS` is the list of contract versions this build can render. The integer moves
+only on a **break** (a field removed, renamed or retyped) and never on a growth, so an unknown
+version is not "newer", it is incompatible — it is refused by name, naming both numbers, and
+refused **before the socket is bound**, because a named error on a terminal is diagnosable and a
+blank page in a browser tab is not. A core too old to answer `board --contract-version` fails that
+same exec, in the same place, and is told to `self-update`.
+
+`FIVE_UI_CLI` points at the 5dive binary; it defaults to `5dive` on `PATH`.
+
+## The two divergences from the core verb
+
+`bin/ui`'s presentation half came from core's `src/cmd_ui.sh`. Two lines of it had to change, and
+each is marked `PLUGIN DIVERGENCE` at its site:
 
 1. **The page polls this executable**, not the CLI bundle — core asked `five_self_bundle` for the
    binary that answers `5dive ui --data`; here that binary is `bin/ui` itself.
-2. **A store this process cannot read is a named empty board.** Core called `tasks_db_init`, which
-   creates the store when it is missing and the caller is root. A plugin must never create core's
-   state or run its migrations, so the guard widens to cover an unreadable database instead.
-3. **The served page's poll argv** drops the `ui` word for the same reason as (1).
+2. **The served page's poll argv** drops the `ui` word for the same reason as (1).
 
-Everything else — every query, the flow derivation, the whole page — is core's code, and
-`tests/ui_plugin_unit.sh` is what says whether that is still true.
+(The third divergence 0.1.0 carried — a widened guard around core's task store — is gone with the
+store reads themselves.)
+
+`tests/ui_plugin_unit.sh` is what says whether all of this is still true, and
+`tests/ui_mutants.sh` is what says whether those arms are looking at anything.

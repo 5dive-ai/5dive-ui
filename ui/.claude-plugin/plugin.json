@@ -1,7 +1,7 @@
 {
   "name": "ui",
-  "version": "0.1.0",
-  "description": "The free single-host web UI: org chart, queue, gates and signed trigger deliveries, read-only, no sign-in, bound to loopback. Three views, one host.",
+  "version": "0.2.0",
+  "description": "The free single-host web UI: org chart, queue, gates and signed trigger deliveries, read-only, no sign-in, bound to loopback. Renders the versioned board document core publishes; opens no database of its own.",
   "author": {
     "name": "5dive",
     "email": "support@5dive.com",

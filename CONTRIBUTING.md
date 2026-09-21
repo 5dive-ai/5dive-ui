@@ -42,18 +42,17 @@ Run it first. Everything below makes more sense once the page is open in front o
 
 ```bash
 git clone https://github.com/5dive-ai/5dive-ui.git && cd 5dive-ui
-bash -n ui/bin/ui               # no build step, no install, no dependencies to fetch
-ui/bin/ui --data                # the JSON every view renders
-ui/bin/ui --port=9000           # the page itself, at http://127.0.0.1:9000
+./ui/bin/ui --html > page.html    # the page, with no box needed at all
+./ui/bin/ui --data                # the JSON every view renders, from the box you are on
+./ui/bin/ui --port=9000           # serve it
 ```
 
-**You do not need a 5dive box to build a view.** With no task store to read, `ui/bin/ui --data`
-answers `"store": "absent"` and the page renders the empty board by name, so every view is
-reachable from a clone. With a box, the same command prints exactly what `5dive ui --data`
-prints, from the same store.
+**This whole repository is the UI.** One file is the verb (`ui/bin/ui`), one is the harness. You
+do not need the 5dive runtime checked out to change a screen — `--html` renders with no box to
+ask at all, which is the loop most frontend work lives in.
 
 Never installed 5dive? [Quickstart](https://github.com/5dive-ai/5dive#quickstart) is a one-liner
-and a few minutes.
+and a few minutes; then `5dive plugin add 5dive-ai/5dive-ui` and `5dive ui`.
 
 ### The scoped issues
 
@@ -69,60 +68,60 @@ Every one of them names **what you see, where the data comes from, what done loo
 roughly how big it is.** If an issue ever sends you into archaeology to find out where a number
 comes from, that is a bug in the issue — say so in the thread and we will fix it.
 
-Two of the five are labelled [good first issue](https://github.com/5dive-ai/5dive-ui/labels/good%20first%20issue),
-because two of them are. A page where everything is tagged beginner-friendly is a page where
-nothing was measured.
+Two of the five are labelled good first issue, because two of them are. A page where everything
+is tagged beginner-friendly is a page where nothing was measured.
 
 ### Where the code is
 
-All of it is [`ui/bin/ui`](ui/bin/ui), one file, in this repository:
+All of it is [`ui/bin/ui`](ui/bin/ui), one file:
 
-- `_ui_state_json()` builds the view state from the local SQLite store and serves it at
-  `GET /api/state`.
-- `_ui_html()` emits the page — inline CSS and JS, no build step, no CDN, because the
-  single-file executable is the only artifact we ship.
+- `_ui_state_json()` asks the runtime for this host's board — one `5dive board --json` call — and
+  passes the document through untouched. It is served at `GET /api/state`.
+- `_ui_html()` emits the page — inline CSS and JS, no build step, no CDN, because one file is the
+  only artifact this plugin ships.
 
-**Work here, not in core.** `ui/bin/ui` is core's `src/cmd_ui.sh` carried across, and core still
-ships its own copy while it holds the `ui` verb name (see [README.md](README.md) for why the
-install line is refused until it releases it). A pull request against core's copy is orphaned the
-day that copy goes; one against this file is not.
+### Where the DATA comes from, and the one boundary that matters
 
-The three deliberate divergences from the carried code are marked `PLUGIN DIVERGENCE` at their
-sites and listed in [`ui/README.md`](ui/README.md). If you touch one, say so in the PR — they are
-the seam this repo is responsible for.
-
-### Running the tests
+**Core owns the document. This repository owns the presentation.** Every number on every screen
+comes out of one versioned JSON document that the runtime emits:
 
 ```bash
-bash tests/ui_plugin_unit.sh    # 43 arms over the data seam, the divergences and the refusals
-bash tests/ui_mutants.sh        # 6 mutants, each named to the arm that must kill it
+5dive board --json              # exactly what --data prints
+5dive board --contract-version  # the integer this UI pins
 ```
 
-They need `bash`, `sqlite3`, `jq`, `python3` and `curl` — no 5dive, no box. Two arms (T71/T72)
-compare this plugin's output with the core verb's byte for byte and skip themselves when `5dive`
-is not on `PATH`; that comparison is a box arm, not a CI arm. `.github/workflows/ui-tests.yml`
-runs both files on every pull request.
+Its keys are `contract`, `scope`, `store`, `host`, `generated_at`, `org[]`, `queue[]`, `gates[]`,
+`flows[]`, `triggers[]`, `deliveries[]` and `stats{}`, and they are written down in core's
+[board contract](https://github.com/5dive-ai/5dive/blob/main/docs/board-contract.md). Layout,
+routes, styling, interaction and anything else you can see are 100% yours to change here. A new
+*field* — a new fact about the board — is a one-line additive PR to core, reviewed by the people
+who own that data, because this plugin cannot invent one.
 
-A view that changes what `/api/state` carries owes an arm in `tests/ui_plugin_unit.sh`; a view
-that only changes the page owes `bash -n ui/bin/ui` clean and a screenshot in the PR.
-
-[The core CONTRIBUTING](https://github.com/5dive-ai/5dive/blob/main/CONTRIBUTING.md) covers the
-runtime itself — dev setup, the bundle rule, the CLI's tests.
-[What the runtime exposes](https://5dive.ai/docs/5dive-cli) is the CLI reference.
+The version integer moves only on a **break**; new fields are additive and leave it alone. This
+build pins what it understands in `FIVE_UI_BOARD_VERSIONS` and refuses anything else by name,
+before it binds a socket.
 
 ### Two lines this UI does not cross
 
 1. **Read-only by construction.** The server answers `GET` and `HEAD` on exactly three paths and
    returns 405 for everything else, so no amount of client-side code can make it write. Anything
    that mutates state already has a CLI verb; this UI's job is to make the org layer *visible*.
-2. **One host.** Every query reads the local store. There is no cross-box roll-up here, on
-   purpose.
+2. **One host.** The board document describes the box you are on. There is no cross-box roll-up
+   here, on purpose.
 
 Both are argued at the top of `ui/bin/ui`. A change that needs either one relaxed is worth
 opening an issue about before you build it — not a no, but a conversation.
 
+### Running the tests
+
+```bash
+bash tests/ui_plugin_unit.sh    # the arms
+bash tests/ui_mutants.sh        # the control: each mutant names the arm that must kill it
+```
+
+Needs `bash`, `jq`, `python3` and `curl`. No 5dive and no box: the suite drives `ui/bin/ui`
+against a stub runtime it writes itself.
+
 ### Come argue with us
 
-[Discord](https://discord.gg/aU2UQC9Myy). Bring the disagreement; the design notes in
-[core's `docs/`](https://github.com/5dive-ai/5dive/tree/main/docs) are where most of ours are
-already written down.
+[Discord](https://discord.gg/aU2UQC9Myy).

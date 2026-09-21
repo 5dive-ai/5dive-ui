@@ -5,65 +5,73 @@ box — its org chart, its queue, its open gates, and the signed trigger deliver
 rows. One plugin, one repo.
 
 ```
+5dive plugin add 5dive-ai/5dive-ui
+
 5dive ui                 # serve on http://127.0.0.1:8735
 5dive ui --data          # the JSON the views render
 5dive ui --html          # the page itself
 ```
 
-## This repository is not installable yet, and that is on purpose
+Needs a 5dive that carries the `board` verb (`5dive board --contract-version` answers). On an
+older box, install refuses nothing and the verb says so on the first run: `sudo 5dive self-update`.
 
-`5dive plugin add 5dive-ai/5dive-ui` is **refused today**, with:
+## Why this is its own repository
+
+Changing a screen used to mean cloning 121k lines of runtime. It does not any more. **Core owns
+the board document; this repository owns the presentation** — the page, the routes, the layout,
+the interaction, all of it in one file you can read in an afternoon.
+
+That boundary is a published contract rather than a convention. The first version of this plugin
+carried core's five SQL queries across with the rest of the code: it opened core's private sqlite
+store and named `tasks`, `agents_org`, `event_triggers` and about thirty columns, two of them
+derived expressions that existed nowhere but inside the query strings. That coupling was a
+*string* — nothing in either repository could see it break, so a core migration renaming a column
+would have broken these views silently on every box that upgraded one side and not the other.
+
+Now the runtime publishes the document instead:
 
 ```
-error: ui declares the verb 'ui', which is already a 5dive command — a plugin verb is only
-       ever reached AFTER the builtin table, so this one could never run.
+$ 5dive board --contract-version
+1
+$ 5dive board --json | jq -c .data.contract
+{"name":"5dive.board","version":1}
 ```
 
-That refusal is correct. `ui` is still a builtin in the core CLI (`src/main.sh`'s dispatch table
-and `FIVEDIVE_BUILTIN_VERBS` in `src/cmd_plugin.sh`), and the same name cannot be claimed twice.
-The migration order is *readers first, delete last*: this tree is published while core still owns
-the verb, so the code can be reviewed and graded before anything is removed from anyone's box. The
-install line starts working when core releases the name and routes the un-migrated case through its
-moved-verb fallthrough (DIVE-4618).
+`ui --data` is that document, passed through byte for byte. This plugin does not open a database,
+does not need `sqlite3`, and does not know what a column is. The version integer moves only on a
+**break** — a field removed, renamed or retyped — never on a growth, so this build pins the
+versions it understands and refuses an unknown one **by name and before it binds a socket**, on
+the terminal of the person who typed the command rather than as a blank page in a tab.
 
-**Until then, keep using `5dive ui` from the core CLI.** Nothing has been removed and no box needs
-to do anything.
+The contract, and the two alternatives that were refused, are written down in core's
+[docs/board-contract.md](https://github.com/5dive-ai/5dive/blob/main/docs/board-contract.md).
 
 ## What is here
 
 | path | what it is |
 |---|---|
-| `ui/bin/ui` | the verb. Core's `src/cmd_ui.sh` carried across, plus a prelude and three marked divergences |
+| `ui/bin/ui` | the verb. One file: the board call, the page, and the server that holds the socket |
 | `ui/.claude-plugin/plugin.json` | the plugin manifest (contract 1, `verb` capability) |
 | `.claude-plugin/marketplace.json` | the one-entry marketplace at the repo root |
-| `tests/ui_plugin_unit.sh` | the harness: 43 arms over the data seam, the divergences and the refusals |
-| `tests/ui_mutants.sh` | the control: six mutants, each named to the arm that must kill it |
+| `CONTRIBUTING.md` | **start here if you want to build a screen** — the scoped issues and where each number comes from |
+| `tests/ui_plugin_unit.sh` | the harness: the passthrough, the negotiation, the refusals, the served page |
+| `tests/ui_mutants.sh` | the control: each mutant breaks one behaviour and names the arm that must kill it |
 
-## Running the tests
+## Contributing
+
+[CONTRIBUTING.md](CONTRIBUTING.md) is the honest map of what is missing, with five scoped issues
+and the data source named for each one — two of them
+[good first issue](https://github.com/5dive-ai/5dive-ui/labels/good%20first%20issue). Changing the
+page needs no 5dive box at all: `ui/bin/ui --html` renders from a clone.
 
 ```
-bash tests/ui_plugin_unit.sh    # 43 passed, 0 failed
-bash tests/ui_mutants.sh        # 6 mutants killed, 0 not
+bash tests/ui_plugin_unit.sh
+bash tests/ui_mutants.sh
 ```
 
-The harness needs `bash`, `sqlite3`, `jq`, `python3` and `curl` — no 5dive, no box. Two of its arms
-(T71/T72) compare this plugin's output with the core verb's byte for byte and are skipped when
-`5dive` is not on `PATH`, because that comparison is a box arm, not a CI arm.
-
-## The seam this does not close
-
-The carried code reads the box's task store **by SQL**, naming core's tables and columns. Those are
-core's private schema, not a published contract, so once boxes install this plugin a core migration
-that renames a column breaks the views silently on any box that upgraded one side and not the other.
-Publishing this tree does not create that risk — nothing is removed and nobody is told to install it
-— but advertising the install does. The read contract is owed before that step.
-
-## Want to build a view?
-
-The control plane is early and four read-only views is a start, not a finish.
-[CONTRIBUTING.md](CONTRIBUTING.md) is the honest map of what is missing, with the data source
-named for each screen, plus five scoped issues — two of them
-[good first issue](https://github.com/5dive-ai/5dive-ui/labels/good%20first%20issue). You do not
-need a 5dive box: `ui/bin/ui --data` answers from a clone.
+The suite needs `bash`, `jq`, `python3` and `curl` — no 5dive and no box, because it drives
+`ui/bin/ui` against a stub runtime it writes itself. Its two parity arms compare this plugin's
+output with the real `5dive board --json` and skip themselves where core is not installed, because
+that comparison is a box arm, not a CI arm.
 
 MIT licensed, like the CLI.
