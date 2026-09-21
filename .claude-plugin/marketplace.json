@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "5dive-ui",
+  "description": "The 5dive local web UI, published from its own repository. One plugin, one repo — the shape `5dive plugin add <owner>/<repo>` was built for.",
+  "owner": {
+    "name": "5dive",
+    "email": "support@5dive.com"
+  },
+  "plugins": [
+    {
+      "name": "ui",
+      "description": "Read-only web views over this box's org chart, queue, gates and trigger deliveries. No sign-in, so it binds loopback and answers GET only.",
+      "category": "surface",
+      "source": "./ui",
+      "homepage": "https://github.com/5dive-ai/5dive-ui"
+    }
+  ]
+}
